@@ -322,6 +322,8 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  np->mask = p->mask;   //子進程也要複製父進程的mask
+
   return pid;
 }
 
