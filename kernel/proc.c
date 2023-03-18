@@ -132,6 +132,13 @@ found:
     return 0;
   }
 
+  // 分配一個 USYSCALL 頁面.
+  if((p->usyscall = (struct usyscall *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -145,7 +152,8 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  p->pagetable = proc_pagetable(p);
+  p->usyscall->pid = p->pid;
   return p;
 }
 
@@ -160,6 +168,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if (p->usyscall) kfree((void *)p->usyscall);
+    p->usyscall = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -201,7 +211,14 @@ proc_pagetable(struct proc *p)
     uvmfree(pagetable, 0);
     return 0;
   }
-
+  // 在trampoline 和 tramframe後映射 允許用戶read操作
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);  //映射失敗就解除之前的映射
+    uvmunmap(pagetable, TRAPFRAME, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
   return pagetable;
 }
 
@@ -212,6 +229,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -681,3 +699,4 @@ procdump(void)
     printf("\n");
   }
 }
+
